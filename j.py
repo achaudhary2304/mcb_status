@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-#also works fine and with normal images of real 
 
 def find_largest_color_area(image_path):
     #Loading the image 
@@ -14,7 +13,7 @@ def find_largest_color_area(image_path):
 
     # defining the range of white and gray so that masks can be created
     #white and greyt would be removed from the image to get the mcb only 
-
+    print(type(image))
     lower_white = np.array([0, 0, 200])
     upper_white = np.array([180, 30, 255])
     lower_grey = np.array([0, 0, 50])
@@ -26,7 +25,10 @@ def find_largest_color_area(image_path):
 
     
     mask_combined = cv2.bitwise_or(mask_white, mask_grey)
+    cv2.imshow('mask',mask_combined)
 
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
     #to get all colors except white and grey
     mask_inverted = cv2.bitwise_not(mask_combined)
 
@@ -43,17 +45,62 @@ def find_largest_color_area(image_path):
         if area > largest_area:
             largest_area = area
             largest_color = contour
-
+    print(type(largest_color))
     if largest_color is None:
         return None, None, None
 
     # creating a mask for the largest color
     largest_color_mask = np.zeros_like(mask_inverted)
     cv2.drawContours(largest_color_mask, [largest_color], -1, (255), thickness=cv2.FILLED)
+    
+    h, s, v = cv2.split(hsv_image)
+    mask = largest_color_mask.astype(bool)
+
+    # Only calculate mean for non-zero masked values
+    hues = h[mask]
+    if len(hues) > 0:
+        # Convert hue to radians (OpenCV hue is 0–180, map to 0–360 degrees)
+        theta = np.deg2rad(hues.astype(np.float32) * 2)
+        mean_sin = np.mean(np.sin(theta))
+        mean_cos = np.mean(np.cos(theta))
+        mean_angle = np.arctan2(mean_sin, mean_cos)
+        mean_hue = np.rad2deg(mean_angle) / 2  # Scale back to OpenCV's [0,180]
+        mean_hue = mean_hue % 180  # Normalize
+    else:
+        mean_hue = 0  # fallback if mask is empty
+
+    # Compute mean for s and v as usual
+    mean_s = s[mask].mean() if np.any(mask) else 0
+    mean_v = v[mask].mean() if np.any(mask) else 0
+
+    mean_color_uint8 = (int(round(mean_hue)), int(round(mean_s)), int(round(mean_v)))    
+    mean_color_img = np.uint8([[mean_color_uint8]])  # shape (1, 1, 3)
+    mean_color_bgr = cv2.cvtColor(mean_color_img, cv2.COLOR_HSV2BGR)[0][0]
+    color_patch = np.full((50, 50, 3), mean_color_bgr, dtype=np.uint8)
+    cv2.imshow('mean_bgr', color_patch)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+
+
+
+
+    # Display the largest contour
+    cv2.imshow('Largest Contour', largest_color_mask)
+
 
     # Calculate the mean color within the largest contour
-    mean_color = cv2.mean(hsv_image, mask=largest_color_mask)[:3]  
-    # we just want the mean values of the all the HSV values not the mask itself
+    mean_color = mean_color_uint8
+    # mean_color_uint8 = tuple(map(int, mean_color))
+
+    # mean_color_img = np.uint8([[mean_color_uint8]])  # shape (1, 1, 3)
+    # mean_color_bgr = cv2.cvtColor(mean_color_img, cv2.COLOR_HSV2BGR)[0][0]
+
+    # # To display as an image:
+    # color_patch = np.full((50, 50, 3), mean_color_bgr, dtype=np.uint8)
+    # cv2.imshow('mean_bgr', color_patch)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
 
 
     # Define color ranges based on the mean color
@@ -61,6 +108,7 @@ def find_largest_color_area(image_path):
     upper_bound = np.array([min(mean_color[0] + 10, 180), min(mean_color[1] + 40, 255), min(mean_color[2] + 40, 255)])
 
     return lower_bound, upper_bound
+
 
 
 def detect_breaker_state(image_path):
@@ -72,16 +120,37 @@ def detect_breaker_state(image_path):
     
     # Convert to HSV color space
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    lower_color,upper_color  = find_largest_color_area(image_path)
+
     
+    lower_color,upper_color  = find_largest_color_area(image_path)
+    print(lower_color)
+    print(upper_color)
+
+    lower_hsv  = np.full((100, 100, 3), lower_color, dtype=np.uint8)
+    upper_hsv  = np.full((100, 100, 3), upper_color, dtype=np.uint8)
+
+    lower_bgr =  cv2.cvtColor(lower_hsv,cv2.COLOR_HSV2BGR)
+    upper_bgr = cv2.cvtColor(upper_hsv,cv2.COLOR_HSV2BGR)
+
+    cv2.imshow('lower',lower_bgr)
+    cv2.imshow('upper',upper_bgr)
+
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
     
     
     # Create mask for color regions
     color_mask = cv2.inRange(hsv, lower_color,upper_color )
-    
+    print(color_mask)
     # Find contours of the color switch
+    cv2.imshow("Color Mask", color_mask) 
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    #this is the problem it produces a fully black mask for an RED MCB
     color_contours, _ = cv2.findContours(color_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
+    print(f"Number of contours found: {len(color_contours)}") #debug
+    print(color_contours)
     if not color_contours:
         return "Unable to detect switch"
     
@@ -120,6 +189,7 @@ def detect_breaker_state(image_path):
     if total_pixels > 0:
         state = "ON" if upper_color_pixels > lower_color_pixels else "OFF"
     else:
+        print(upper_percentage)
         state = "Unable to determine state"
     
     # Create visualization
@@ -186,18 +256,23 @@ def detect_breaker_state(image_path):
 def main(image_path):
     result = detect_breaker_state(image_path)
     
-    if isinstance(result, dict):
-        print(f"Circuit Breaker State: {result['state']}")
-        print(f"Upper color Percentage: {result['upper_percentage']:.1f}%")
-        print(f"Lower color Percentage: {result['lower_percentage']:.1f}%")
-        
-        # Display debug image
-        cv2.imshow("Circuit Breaker Analysis", result['debug_image'])
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-    else:
-        print(result)
+    print(result)
+    print(f"Circuit Breaker State: {result['state']}")
+    print(f"Upper color Percentage: {result['upper_percentage']:.1f}%")
+    print(f"Lower color Percentage: {result['lower_percentage']:.1f}%")
+    
+    # Display debug image
+    cv2.imshow("Circuit Breaker Analysis", result['debug_image'])
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    
 
 if __name__ == "__main__":
-    image_path = r"/home/aryan/code_qr/images/blac.jpeg"
+    image_path = "/home/aryan/projects/code_qr/images/orange.webp"
+    #problem in blue_2 does not detect fully 
+    #problem in blue_3 too close 
+    #does not detect the the blue portions for bluee.png
+    #does not work properly with mcb_switch
+    #does not detect with the red.jpeg 
+
     main(image_path)
